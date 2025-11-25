@@ -370,20 +370,21 @@ def transcribe():
             return jsonify({'error': 'Invalid file format. Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm'}), 400
         
         filename = secure_filename(file.filename)
-        # Save to /tmp with a unique name that persists for the worker
-        temp_file_path = os.path.join('/tmp', f"transcribe_{secrets.token_hex(8)}{os.path.splitext(filename)[1]}")
-        file.save(temp_file_path)
         
-        logger.info(f"File saved to: {temp_file_path}")
-        file_size = os.path.getsize(temp_file_path)
-        logger.info(f"File size: {file_size} bytes")
+        # Read file content and encode as base64 to pass through Redis
+        import base64
+        file_content = file.read()
+        file_data_b64 = base64.b64encode(file_content).decode('utf-8')
+        
+        logger.info(f"File size: {len(file_content)} bytes")
         
         # Queue the job if Redis is available
         if REDIS_AVAILABLE and task_queue:
             from jobs import transcribe_audio_job
             job = task_queue.enqueue(
                 transcribe_audio_job,
-                temp_file_path,
+                file_data_b64,
+                filename,
                 job_timeout=600  # 10 minute timeout
             )
             logger.info(f"Job queued with ID: {job.id}")
@@ -396,7 +397,7 @@ def transcribe():
             # Fallback to sync processing (for local dev without Redis)
             logger.warning("Redis not available, processing synchronously")
             from jobs import transcribe_audio_job
-            result = transcribe_audio_job(temp_file_path)
+            result = transcribe_audio_job(file_data_b64, filename)
             if result.get('status') == 'completed':
                 return jsonify(result)
             else:

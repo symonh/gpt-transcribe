@@ -3,6 +3,8 @@ Background job functions for transcription processing.
 """
 import os
 import json
+import base64
+import tempfile
 import requests
 import logging
 from openai import OpenAI
@@ -22,17 +24,30 @@ except ImportError:
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-def transcribe_audio_job(file_path):
+def transcribe_audio_job(file_data_b64, filename):
     """
     Background job to transcribe audio file.
+    file_data_b64: Base64 encoded file content
+    filename: Original filename (for extension)
     Returns the transcription result.
     """
+    temp_file_path = None
     try:
-        logger.info(f"Starting transcription job for: {file_path}")
+        logger.info(f"Starting transcription job for: {filename}")
+        
+        # Decode base64 file data and save to temp file
+        file_data = base64.b64decode(file_data_b64)
+        ext = os.path.splitext(filename)[1]
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+            temp_file.write(file_data)
+            temp_file_path = temp_file.name
+        
+        logger.info(f"File saved to worker temp: {temp_file_path}, size: {len(file_data)} bytes")
         
         # Step 1: Transcribe with diarization model
         logger.info("Step 1: Transcribing with diarization model...")
-        raw_transcript = transcribe_with_diarization(file_path)
+        raw_transcript = transcribe_with_diarization(temp_file_path)
         logger.info(f"Raw transcript length: {len(raw_transcript)} chars")
         
         # Step 2: Use GPT-4 to identify speakers
@@ -47,22 +62,20 @@ def transcribe_audio_job(file_path):
         
         logger.info(f"Transcription completed with {len(result['segments'])} segments")
         
-        # Clean up temp file
-        if os.path.exists(file_path):
-            os.unlink(file_path)
-            logger.info("Temporary file cleaned up")
-        
         return result
     
     except Exception as e:
         logger.exception(f"Error in transcription job: {e}")
-        # Clean up temp file on error
-        if os.path.exists(file_path):
-            os.unlink(file_path)
         return {
             'status': 'failed',
             'error': str(e)
         }
+    
+    finally:
+        # Clean up temp file
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
+            logger.info("Temporary file cleaned up")
 
 
 def transcribe_with_diarization(file_path):
