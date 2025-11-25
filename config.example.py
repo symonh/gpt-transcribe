@@ -3,6 +3,9 @@ Configuration file for GPT Transcribe application.
 Copy this file to config.py and fill in your credentials.
 
 IMPORTANT: Never commit config.py to version control!
+
+To generate a password hash, run:
+    python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('your-password'))"
 """
 
 import os
@@ -15,6 +18,11 @@ OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', 'your-openai-api-key-here')
 # Use a Gmail App Password: https://support.google.com/accounts/answer/185833
 GMAIL_SENDER_EMAIL = os.environ.get('GMAIL_SENDER_EMAIL', 'your-email@gmail.com')
 GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD', 'your-app-password-here')
+
+# Authentication Configuration
+APP_USERNAME = 'admin'
+APP_PASSWORD_HASH = 'your-password-hash-here'  # Generate with werkzeug.security.generate_password_hash()
+SECRET_KEY = 'generate-a-random-secret-key'  # Use: python -c "import secrets; print(secrets.token_hex(32))"
 
 # App Configuration
 MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size

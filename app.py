@@ -5,12 +5,15 @@ import requests
 import json
 import smtplib
 import tempfile
+import secrets
+from functools import wraps
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template, Response, session, redirect, url_for
 from openai import OpenAI
 from werkzeug.utils import secure_filename
+from werkzeug.security import check_password_hash, generate_password_hash
 from io import BytesIO
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -28,6 +31,10 @@ try:
     GMAIL_APP_PASSWORD = config.GMAIL_APP_PASSWORD
     MAX_CONTENT_LENGTH = config.MAX_CONTENT_LENGTH
     ALLOWED_EXTENSIONS = config.ALLOWED_EXTENSIONS
+    # Auth credentials
+    APP_USERNAME = getattr(config, 'APP_USERNAME', 'admin')
+    APP_PASSWORD_HASH = getattr(config, 'APP_PASSWORD_HASH', None)
+    SECRET_KEY = getattr(config, 'SECRET_KEY', secrets.token_hex(32))
 except ImportError:
     # Fall back to environment variables (for Heroku deployment)
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
@@ -35,6 +42,10 @@ except ImportError:
     GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB
     ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'}
+    # Auth credentials from environment
+    APP_USERNAME = os.environ.get('APP_USERNAME', 'admin')
+    APP_PASSWORD_HASH = os.environ.get('APP_PASSWORD_HASH')
+    SECRET_KEY = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -42,9 +53,22 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+app.config['SECRET_KEY'] = SECRET_KEY
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+
+def login_required(f):
+    """Decorator to require login for routes"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get('logged_in'):
+            if request.is_json:
+                return jsonify({'error': 'Authentication required'}), 401
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 def allowed_file(filename):
@@ -321,12 +345,49 @@ def send_email(to_email, subject, body_text, body_html=None, attachment=None, at
         server.sendmail(GMAIL_SENDER_EMAIL, to_email, msg.as_string())
 
 
+# ============ Authentication Routes ============
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Handle login"""
+    if session.get('logged_in'):
+        return redirect(url_for('index'))
+    
+    error = None
+    if request.method == 'POST':
+        username = request.form.get('username', '')
+        password = request.form.get('password', '')
+        
+        # Check credentials
+        if username == APP_USERNAME and APP_PASSWORD_HASH:
+            if check_password_hash(APP_PASSWORD_HASH, password):
+                session['logged_in'] = True
+                session['username'] = username
+                session.permanent = True
+                return redirect(url_for('index'))
+        
+        error = 'Invalid credentials'
+    
+    return render_template('login.html', error=error)
+
+
+@app.route('/logout')
+def logout():
+    """Handle logout"""
+    session.clear()
+    return redirect(url_for('login'))
+
+
+# ============ Protected Routes ============
+
 @app.route('/')
+@login_required
 def index():
     return render_template('index.html')
 
 
 @app.route('/transcribe', methods=['POST'])
+@login_required
 def transcribe():
     try:
         logger.info("Received transcription request")
@@ -382,6 +443,7 @@ def transcribe():
 
 
 @app.route('/export/pdf', methods=['POST'])
+@login_required
 def export_pdf():
     """Export transcript as PDF"""
     try:
@@ -402,6 +464,7 @@ def export_pdf():
 
 
 @app.route('/export/text', methods=['POST'])
+@login_required
 def export_text():
     """Export transcript as plain text"""
     try:
@@ -422,6 +485,7 @@ def export_text():
 
 
 @app.route('/export/markdown', methods=['POST'])
+@login_required
 def export_markdown():
     """Export transcript as Markdown"""
     try:
@@ -442,6 +506,7 @@ def export_markdown():
 
 
 @app.route('/export/html', methods=['POST'])
+@login_required
 def export_html():
     """Export transcript as HTML"""
     try:
@@ -462,6 +527,7 @@ def export_html():
 
 
 @app.route('/send-email', methods=['POST'])
+@login_required
 def send_transcript_email():
     """Send transcript via email"""
     try:
