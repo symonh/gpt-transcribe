@@ -20,20 +20,31 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.enums import TA_LEFT
 import markdown as md
 
-# Import configuration
-import config
+# Configuration - try to import config.py, fall back to environment variables
+try:
+    import config
+    OPENAI_API_KEY = config.OPENAI_API_KEY
+    GMAIL_SENDER_EMAIL = config.GMAIL_SENDER_EMAIL
+    GMAIL_APP_PASSWORD = config.GMAIL_APP_PASSWORD
+    MAX_CONTENT_LENGTH = config.MAX_CONTENT_LENGTH
+    ALLOWED_EXTENSIONS = config.ALLOWED_EXTENSIONS
+except ImportError:
+    # Fall back to environment variables (for Heroku deployment)
+    OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+    GMAIL_SENDER_EMAIL = os.environ.get('GMAIL_SENDER_EMAIL')
+    GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
+    MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB
+    ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'}
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = config.MAX_CONTENT_LENGTH
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 # Initialize OpenAI client
-client = OpenAI(api_key=config.OPENAI_API_KEY)
-
-ALLOWED_EXTENSIONS = config.ALLOWED_EXTENSIONS
+client = OpenAI(api_key=OPENAI_API_KEY)
 
 
 def allowed_file(filename):
@@ -47,7 +58,7 @@ def transcribe_with_diarization(file_path):
     with open(file_path, 'rb') as audio_file:
         response = requests.post(
             'https://api.openai.com/v1/audio/transcriptions',
-            headers={'Authorization': f'Bearer {config.OPENAI_API_KEY}'},
+            headers={'Authorization': f'Bearer {OPENAI_API_KEY}'},
             files={'file': audio_file},
             data={
                 'model': 'gpt-4o-transcribe-diarize',
@@ -286,7 +297,7 @@ def send_email(to_email, subject, body_text, body_html=None, attachment=None, at
     """Send email using Gmail SMTP with app password"""
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = config.GMAIL_SENDER_EMAIL
+    msg['From'] = GMAIL_SENDER_EMAIL
     msg['To'] = to_email
     
     # Add text body
@@ -306,8 +317,8 @@ def send_email(to_email, subject, body_text, body_html=None, attachment=None, at
     
     # Send via Gmail SMTP
     with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
-        server.login(config.GMAIL_SENDER_EMAIL, config.GMAIL_APP_PASSWORD)
-        server.sendmail(config.GMAIL_SENDER_EMAIL, to_email, msg.as_string())
+        server.login(GMAIL_SENDER_EMAIL, GMAIL_APP_PASSWORD)
+        server.sendmail(GMAIL_SENDER_EMAIL, to_email, msg.as_string())
 
 
 @app.route('/')
