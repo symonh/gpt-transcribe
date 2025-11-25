@@ -63,6 +63,29 @@
         .header {
             text-align: center;
             margin-bottom: 48px;
+            position: relative;
+        }
+
+        .logout-btn {
+            position: absolute;
+            top: 0;
+            right: 0;
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            font-size: 13px;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .logout-btn:hover {
+            border-color: var(--accent-tertiary);
+            color: var(--accent-tertiary);
         }
 
         .logo {
@@ -723,6 +746,10 @@
 <body>
     <div class="container">
         <header class="header">
+            <a href="/logout" class="logout-btn">
+                <span>🚪</span>
+                <span>Sign Out</span>
+            </a>
             <div class="logo">
                 <div class="logo-icon">🎙️</div>
                 <h1>TRANSCRIBE</h1>
