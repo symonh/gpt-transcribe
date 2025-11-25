@@ -1,0 +1,11 @@
+Flask==3.0.0
+gunicorn==21.2.0
+openai==1.54.4
+werkzeug==3.0.1
+httpx==0.24.1
+httpcore==0.17.3
+h11==0.14.0
+requests==2.31.0
+reportlab==4.0.7
+weasyprint==60.1
+markdown==3.5.1

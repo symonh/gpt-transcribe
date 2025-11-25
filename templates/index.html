@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meeting Transcriber - AI-Powered Diarization</title>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0a0a0f;
+            --bg-card: #12121a;
+            --bg-hover: #1a1a25;
+            --accent-primary: #00ff88;
+            --accent-secondary: #00ccff;
+            --accent-tertiary: #ff6b9d;
+            --text-primary: #ffffff;
+            --text-secondary: #8a8a9a;
+            --text-muted: #5a5a6a;
+            --border-color: #2a2a3a;
+            --gradient-primary: linear-gradient(135deg, #00ff88 0%, #00ccff 100%);
+            --gradient-secondary: linear-gradient(135deg, #ff6b9d 0%, #c44569 100%);
+            --shadow-glow: 0 0 40px rgba(0, 255, 136, 0.15);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-dark);
+            min-height: 100vh;
+            color: var(--text-primary);
+            position: relative;
+            overflow-x: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(ellipse at 20% 20%, rgba(0, 255, 136, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(0, 204, 255, 0.06) 0%, transparent 50%),
+                radial-gradient(ellipse at 50% 50%, rgba(255, 107, 157, 0.04) 0%, transparent 60%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .logo-icon {
+            width: 48px;
+            height: 48px;
+            background: var(--gradient-primary);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            box-shadow: var(--shadow-glow);
+        }
+
+        h1 {
+            font-family: 'Space Mono', monospace;
+            font-size: 32px;
+            font-weight: 700;
+            background: var(--gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 16px;
+            margin-top: 8px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            border-color: rgba(0, 255, 136, 0.3);
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 12px;
+            padding: 48px 24px;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            background: rgba(0, 255, 136, 0.02);
+        }
+
+        .upload-area:hover {
+            border-color: var(--accent-primary);
+            background: rgba(0, 255, 136, 0.05);
+        }
+
+        .upload-area.dragover {
+            border-color: var(--accent-primary);
+            background: rgba(0, 255, 136, 0.08);
+            transform: scale(1.01);
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            filter: grayscale(0.3);
+        }
+
+        .upload-text {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .upload-subtext {
+            color: var(--text-muted);
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 28px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: var(--gradient-primary);
+            color: var(--bg-dark);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 255, 136, 0.3);
+        }
+
+        .btn-secondary {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent-primary);
+            background: rgba(0, 255, 136, 0.1);
+        }
+
+        .btn-icon {
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .formats-badge {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            font-size: 12px;
+            color: var(--text-muted);
+            font-family: 'Space Mono', monospace;
+        }
+
+        .file-info {
+            display: none;
+            padding: 16px;
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            border-radius: 8px;
+            margin-top: 20px;
+            color: var(--accent-primary);
+            font-family: 'Space Mono', monospace;
+            font-size: 13px;
+        }
+
+        .file-info.active {
+            display: block;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--accent-primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .loading-steps {
+            margin-top: 16px;
+            font-family: 'Space Mono', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .result {
+            display: none;
+        }
+
+        .result.active {
+            display: block;
+            animation: fadeIn 0.4s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .result-title {
+            font-family: 'Space Mono', monospace;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .result-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .transcript-box {
+            background: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .transcript-box::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .transcript-box::-webkit-scrollbar-track {
+            background: var(--bg-dark);
+        }
+
+        .transcript-box::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+
+        .speaker-segment {
+            margin-bottom: 20px;
+            padding: 16px;
+            background: var(--bg-card);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent-primary);
+            transition: all 0.2s ease;
+        }
+
+        .speaker-segment:hover {
+            background: var(--bg-hover);
+        }
+
+        .speaker-label {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+
+        .speaker-name {
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: 'Space Mono', monospace;
+            color: var(--bg-dark);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .speaker-name:hover {
+            transform: scale(1.05);
+        }
+
+        .speaker-name-input {
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: 'Space Mono', monospace;
+            background: var(--bg-dark);
+            border: 1px solid var(--accent-primary);
+            color: var(--text-primary);
+            outline: none;
+            width: 150px;
+        }
+
+        .edit-hint {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .speaker-1 { border-left-color: #00ff88; }
+        .speaker-1 .speaker-name { background: #00ff88; }
+        
+        .speaker-2 { border-left-color: #ff6b9d; }
+        .speaker-2 .speaker-name { background: #ff6b9d; }
+        
+        .speaker-3 { border-left-color: #00ccff; }
+        .speaker-3 .speaker-name { background: #00ccff; }
+        
+        .speaker-4 { border-left-color: #ffd93d; }
+        .speaker-4 .speaker-name { background: #ffd93d; }
+        
+        .speaker-5 { border-left-color: #c44569; }
+        .speaker-5 .speaker-name { background: #c44569; }
+        
+        .speaker-6 { border-left-color: #6c5ce7; }
+        .speaker-6 .speaker-name { background: #6c5ce7; color: white; }
+
+        .speaker-text {
+            color: var(--text-secondary);
+            line-height: 1.7;
+            font-size: 14px;
+        }
+
+        .error {
+            display: none;
+            padding: 16px;
+            background: rgba(255, 107, 157, 0.1);
+            border: 1px solid rgba(255, 107, 157, 0.3);
+            border-radius: 8px;
+            color: var(--accent-tertiary);
+            margin-top: 20px;
+        }
+
+        .error.active {
+            display: block;
+        }
+
+        /* Export Panel */
+        .export-panel {
+            display: none;
+            margin-top: 24px;
+            padding: 24px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+        }
+
+        .export-panel.active {
+            display: block;
+        }
+
+        .export-section {
+            margin-bottom: 24px;
+        }
+
+        .export-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .export-section-title {
+            font-family: 'Space Mono', monospace;
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .export-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .export-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: inherit;
+        }
+
+        .export-btn:hover {
+            border-color: var(--accent-primary);
+            background: rgba(0, 255, 136, 0.1);
+        }
+
+        .export-btn .icon {
+            font-size: 16px;
+        }
+
+        /* Email Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 32px;
+            max-width: 450px;
+            width: 100%;
+            animation: modalIn 0.3s ease;
+        }
+
+        @keyframes modalIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-title {
+            font-family: 'Space Mono', monospace;
+            font-size: 18px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .modal-subtitle {
+            color: var(--text-muted);
+            font-size: 14px;
+            margin-bottom: 24px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+
+        .form-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        .form-checkbox input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent-primary);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .modal-actions .btn {
+            flex: 1;
+        }
+
+        /* Speaker Mapping Panel */
+        .speaker-mapping {
+            display: none;
+            margin-bottom: 24px;
+            padding: 20px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+        }
+
+        .speaker-mapping.active {
+            display: block;
+        }
+
+        .speaker-mapping-title {
+            font-family: 'Space Mono', monospace;
+            font-size: 14px;
+            color: var(--accent-primary);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .speaker-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 12px;
+            padding: 12px;
+            background: var(--bg-card);
+            border-radius: 8px;
+        }
+
+        .speaker-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .speaker-original {
+            font-family: 'Space Mono', monospace;
+            font-size: 13px;
+            color: var(--text-muted);
+            min-width: 100px;
+        }
+
+        .speaker-arrow {
+            color: var(--accent-primary);
+        }
+
+        .speaker-new-input {
+            flex: 1;
+            padding: 8px 12px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        .speaker-new-input:focus {
+            outline: none;
+            border-color: var(--accent-primary);
+        }
+
+        .apply-names-btn {
+            margin-top: 16px;
+        }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 16px 24px;
+            background: var(--bg-card);
+            border: 1px solid var(--accent-primary);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            display: none;
+            z-index: 2000;
+            animation: toastIn 0.3s ease;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .toast.active {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .toast-success {
+            border-color: var(--accent-primary);
+        }
+
+        .toast-error {
+            border-color: var(--accent-tertiary);
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 24px 16px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .result-header {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .result-actions {
+                justify-content: center;
+            }
+
+            .export-buttons {
+                flex-direction: column;
+            }
+
+            .speaker-row {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+            }
+
+            .speaker-arrow {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">🎙️</div>
+                <h1>TRANSCRIBE</h1>
+            </div>
+            <p class="subtitle">AI-powered meeting transcription with speaker diarization</p>
+        </header>
+
+        <div class="card">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📤</div>
+                <div class="upload-text">Drop your audio file here</div>
+                <div class="upload-subtext">or click to browse your files</div>
+                <button class="btn btn-primary" onclick="event.stopPropagation(); document.getElementById('audioFile').click()">
+                    Select Audio File
+                </button>
+                <input type="file" id="audioFile" accept=".mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm">
+                <div class="formats-badge">
+                    MP3 • MP4 • M4A • WAV • WebM • Max 100MB
+                </div>
+            </div>
+
+            <div class="file-info" id="fileInfo"></div>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div class="loading-text">Transcribing your audio...</div>
+                <div class="loading-steps" id="loadingSteps">Uploading file...</div>
+            </div>
+
+            <div class="error" id="error"></div>
+        </div>
+
+        <div class="result card" id="result">
+            <div class="result-header">
+                <div class="result-title">
+                    <span>📝</span>
+                    <span>Transcript</span>
+                </div>
+                <div class="result-actions">
+                    <button class="btn btn-secondary btn-icon" onclick="toggleSpeakerMapping()" title="Edit speaker names">
+                        ✏️ Edit Names
+                    </button>
+                    <button class="btn btn-secondary btn-icon" onclick="copyTranscript()" title="Copy to clipboard">
+                        📋 Copy
+                    </button>
+                    <button class="btn btn-primary btn-icon" onclick="toggleExportPanel()">
+                        ⬇️ Export
+                    </button>
+                </div>
+            </div>
+
+            <div class="speaker-mapping" id="speakerMapping">
+                <div class="speaker-mapping-title">
+                    <span>✏️</span>
+                    <span>Rename Speakers</span>
+                </div>
+                <div id="speakerMappingRows"></div>
+                <button class="btn btn-primary apply-names-btn" onclick="applySpeakerNames()">
+                    Apply Names
+                </button>
+            </div>
+
+            <div class="transcript-box" id="transcriptBox"></div>
+
+            <div class="export-panel" id="exportPanel">
+                <div class="export-section">
+                    <div class="export-section-title">Download As</div>
+                    <div class="export-buttons">
+                        <button class="export-btn" onclick="downloadAs('pdf')">
+                            <span class="icon">📄</span>
+                            <span>PDF</span>
+                        </button>
+                        <button class="export-btn" onclick="downloadAs('text')">
+                            <span class="icon">📝</span>
+                            <span>Text</span>
+                        </button>
+                        <button class="export-btn" onclick="downloadAs('markdown')">
+                            <span class="icon">📑</span>
+                            <span>Markdown</span>
+                        </button>
+                        <button class="export-btn" onclick="downloadAs('html')">
+                            <span class="icon">🌐</span>
+                            <span>HTML</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="export-section">
+                    <div class="export-section-title">Send via Email</div>
+                    <div class="export-buttons">
+                        <button class="export-btn" onclick="openEmailModal()">
+                            <span class="icon">✉️</span>
+                            <span>Send to Email</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Email Modal -->
+    <div class="modal-overlay" id="emailModal">
+        <div class="modal">
+            <div class="modal-title">
+                <span>✉️</span>
+                <span>Send Transcript</span>
+            </div>
+            <div class="modal-subtitle">Send this transcript directly to an email address</div>
+            
+            <div class="form-group">
+                <label class="form-label">Recipient Email</label>
+                <input type="email" class="form-input" id="recipientEmail" placeholder="name@example.com">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label">Subject (optional)</label>
+                <input type="text" class="form-input" id="emailSubject" placeholder="Meeting Transcript">
+            </div>
+            
+            <div class="form-group">
+                <label class="form-checkbox">
+                    <input type="checkbox" id="includePdf" checked>
+                    <span>Include PDF attachment</span>
+                </label>
+            </div>
+            
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeEmailModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="sendEmail()" id="sendEmailBtn">Send Email</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast">
+        <span id="toastIcon">✓</span>
+        <span id="toastMessage"></span>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('audioFile');
+        const loading = document.getElementById('loading');
+        const loadingSteps = document.getElementById('loadingSteps');
+        const result = document.getElementById('result');
+        const error = document.getElementById('error');
+        const fileInfo = document.getElementById('fileInfo');
+        const transcriptBox = document.getElementById('transcriptBox');
+
+        // Store current transcript data
+        let currentTranscript = null;
+        let speakerNameMap = {};
+
+        // Drag and drop handlers
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        uploadArea.addEventListener('click', (e) => {
+            if (e.target.tagName !== 'BUTTON') {
+                fileInput.click();
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            error.classList.remove('active');
+            result.classList.remove('active');
+            fileInfo.classList.remove('active');
+
+            fileInfo.innerHTML = `<span>📁</span> ${file.name} (${formatFileSize(file.size)})`;
+            fileInfo.classList.add('active');
+
+            transcribeAudio(file);
+        }
+
+        async function transcribeAudio(file) {
+            loading.classList.add('active');
+            loadingSteps.textContent = 'Uploading file...';
+            
+            const formData = new FormData();
+            formData.append('audio', file);
+
+            try {
+                setTimeout(() => {
+                    loadingSteps.textContent = 'Transcribing with AI...';
+                }, 2000);
+                
+                setTimeout(() => {
+                    loadingSteps.textContent = 'Identifying speakers...';
+                }, 5000);
+
+                const response = await fetch('/transcribe', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Transcription failed');
+                }
+
+                currentTranscript = data;
+                speakerNameMap = {};
+                displayTranscript(data);
+            } catch (err) {
+                error.textContent = `Error: ${err.message}`;
+                error.classList.add('active');
+            } finally {
+                loading.classList.remove('active');
+            }
+        }
+
+        function displayTranscript(data) {
+            let html = '';
+            const uniqueSpeakers = new Set();
+
+            if (data.segments && data.segments.length > 0) {
+                data.segments.forEach((segment) => {
+                    const originalSpeaker = segment.speaker || 'Speaker';
+                    uniqueSpeakers.add(originalSpeaker);
+                    const displaySpeaker = speakerNameMap[originalSpeaker] || originalSpeaker;
+                    const speakerClass = getSpeakerClass(originalSpeaker);
+                    
+                    html += `
+                        <div class="speaker-segment ${speakerClass}" data-original-speaker="${originalSpeaker}">
+                            <div class="speaker-label">
+                                <span class="speaker-name" onclick="editSpeakerName(this, '${originalSpeaker}')">${displaySpeaker}</span>
+                                <span class="edit-hint">click to rename</span>
+                            </div>
+                            <div class="speaker-text">${segment.text}</div>
+                        </div>
+                    `;
+                });
+            } else if (data.text) {
+                html = `<div class="speaker-text">${data.text}</div>`;
+            }
+
+            transcriptBox.innerHTML = html;
+            result.classList.add('active');
+
+            // Build speaker mapping UI
+            buildSpeakerMappingUI(Array.from(uniqueSpeakers));
+        }
+
+        function buildSpeakerMappingUI(speakers) {
+            const container = document.getElementById('speakerMappingRows');
+            container.innerHTML = speakers.map(speaker => `
+                <div class="speaker-row">
+                    <span class="speaker-original">${speaker}</span>
+                    <span class="speaker-arrow">→</span>
+                    <input type="text" class="speaker-new-input" 
+                           data-original="${speaker}" 
+                           value="${speakerNameMap[speaker] || ''}"
+                           placeholder="Enter new name...">
+                </div>
+            `).join('');
+        }
+
+        function toggleSpeakerMapping() {
+            const panel = document.getElementById('speakerMapping');
+            panel.classList.toggle('active');
+        }
+
+        function applySpeakerNames() {
+            const inputs = document.querySelectorAll('.speaker-new-input');
+            inputs.forEach(input => {
+                const original = input.dataset.original;
+                const newName = input.value.trim();
+                if (newName) {
+                    speakerNameMap[original] = newName;
+                } else {
+                    delete speakerNameMap[original];
+                }
+            });
+
+            // Update displayed transcript
+            displayTranscript(currentTranscript);
+            
+            // Close panel
+            document.getElementById('speakerMapping').classList.remove('active');
+            
+            showToast('Speaker names updated!', 'success');
+        }
+
+        function editSpeakerName(element, originalSpeaker) {
+            const currentName = element.textContent;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'speaker-name-input';
+            input.value = currentName;
+            
+            element.replaceWith(input);
+            input.focus();
+            input.select();
+
+            const saveName = () => {
+                const newName = input.value.trim() || originalSpeaker;
+                if (newName !== originalSpeaker) {
+                    speakerNameMap[originalSpeaker] = newName;
+                } else {
+                    delete speakerNameMap[originalSpeaker];
+                }
+                displayTranscript(currentTranscript);
+            };
+
+            input.addEventListener('blur', saveName);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    saveName();
+                } else if (e.key === 'Escape') {
+                    displayTranscript(currentTranscript);
+                }
+            });
+        }
+        
+        function getSpeakerClass(speaker) {
+            const speakerColors = ['speaker-1', 'speaker-2', 'speaker-3', 'speaker-4', 'speaker-5', 'speaker-6'];
+            const speakerNum = parseInt(speaker.replace(/\D/g, '')) || 1;
+            return speakerColors[(speakerNum - 1) % speakerColors.length];
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        function copyTranscript() {
+            const segments = getExportSegments();
+            const text = segments.map(s => `${s.speaker}:\n${s.text}`).join('\n\n');
+            
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('Copied to clipboard!', 'success');
+            });
+        }
+
+        function getExportSegments() {
+            if (!currentTranscript || !currentTranscript.segments) return [];
+            
+            return currentTranscript.segments.map(segment => ({
+                speaker: speakerNameMap[segment.speaker] || segment.speaker,
+                text: segment.text
+            }));
+        }
+
+        function toggleExportPanel() {
+            const panel = document.getElementById('exportPanel');
+            panel.classList.toggle('active');
+        }
+
+        async function downloadAs(format) {
+            const segments = getExportSegments();
+            const title = 'Meeting Transcript';
+
+            try {
+                const response = await fetch(`/export/${format}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ segments, title })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Export failed');
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                
+                const extensions = { pdf: 'pdf', text: 'txt', markdown: 'md', html: 'html' };
+                a.download = `${title}.${extensions[format]}`;
+                
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+
+                showToast(`Downloaded as ${format.toUpperCase()}!`, 'success');
+            } catch (err) {
+                showToast(`Export failed: ${err.message}`, 'error');
+            }
+        }
+
+        function openEmailModal() {
+            document.getElementById('emailModal').classList.add('active');
+        }
+
+        function closeEmailModal() {
+            document.getElementById('emailModal').classList.remove('active');
+        }
+
+        async function sendEmail() {
+            const email = document.getElementById('recipientEmail').value.trim();
+            const subject = document.getElementById('emailSubject').value.trim() || 'Meeting Transcript';
+            const includePdf = document.getElementById('includePdf').checked;
+            const btn = document.getElementById('sendEmailBtn');
+
+            if (!email) {
+                showToast('Please enter an email address', 'error');
+                return;
+            }
+
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+
+            try {
+                const response = await fetch('/send-email', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        email,
+                        segments: getExportSegments(),
+                        title: subject,
+                        include_pdf: includePdf
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to send email');
+                }
+
+                showToast(`Email sent to ${email}!`, 'success');
+                closeEmailModal();
+            } catch (err) {
+                showToast(`Failed to send: ${err.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Send Email';
+            }
+        }
+
+        function showToast(message, type = 'success') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toastMessage');
+            const toastIcon = document.getElementById('toastIcon');
+            
+            toastMessage.textContent = message;
+            toastIcon.textContent = type === 'success' ? '✓' : '✗';
+            toast.className = `toast active toast-${type}`;
+            
+            setTimeout(() => {
+                toast.classList.remove('active');
+            }, 3000);
+        }
+
+        // Close modal on overlay click
+        document.getElementById('emailModal').addEventListener('click', (e) => {
+            if (e.target.id === 'emailModal') {
+                closeEmailModal();
+            }
+        });
+    </script>
+</body>
+</html>
