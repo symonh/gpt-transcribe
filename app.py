@@ -64,8 +64,12 @@ app.config['SECRET_KEY'] = SECRET_KEY
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # Initialize Redis connection and queue
+# Heroku Redis uses self-signed certs, need to disable SSL verification
 try:
-    redis_conn = redis.from_url(REDIS_URL)
+    if REDIS_URL.startswith('rediss://'):
+        redis_conn = redis.from_url(REDIS_URL, ssl_cert_reqs=None)
+    else:
+        redis_conn = redis.from_url(REDIS_URL)
     task_queue = Queue('transcription', connection=redis_conn)
     REDIS_AVAILABLE = True
     logger.info("Redis connection established")
