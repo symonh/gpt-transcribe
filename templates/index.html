@@ -952,14 +952,7 @@
             formData.append('audio', file);
 
             try {
-                setTimeout(() => {
-                    loadingSteps.textContent = 'Transcribing with AI...';
-                }, 2000);
-                
-                setTimeout(() => {
-                    loadingSteps.textContent = 'Identifying speakers...';
-                }, 5000);
-
+                // Submit the file
                 const response = await fetch('/transcribe', {
                     method: 'POST',
                     body: formData
@@ -971,14 +964,63 @@
                     throw new Error(data.error || 'Transcription failed');
                 }
 
-                currentTranscript = data;
-                speakerNameMap = {};
-                displayTranscript(data);
+                // Check if it's async (has job_id) or sync (direct result)
+                if (data.job_id) {
+                    // Async mode - poll for status
+                    loadingSteps.textContent = 'Processing transcription...';
+                    await pollJobStatus(data.job_id);
+                } else if (data.segments) {
+                    // Sync mode - direct result
+                    currentTranscript = data;
+                    speakerNameMap = {};
+                    displayTranscript(data);
+                    loading.classList.remove('active');
+                }
             } catch (err) {
                 error.textContent = `Error: ${err.message}`;
                 error.classList.add('active');
-            } finally {
                 loading.classList.remove('active');
+            }
+        }
+
+        async function pollJobStatus(jobId) {
+            const statusMessages = [
+                'Transcribing audio with AI...',
+                'Analyzing speech patterns...',
+                'Identifying different speakers...',
+                'Formatting transcript...'
+            ];
+            let messageIndex = 0;
+            
+            // Rotate status messages
+            const messageInterval = setInterval(() => {
+                messageIndex = (messageIndex + 1) % statusMessages.length;
+                loadingSteps.textContent = statusMessages[messageIndex];
+            }, 3000);
+
+            try {
+                while (true) {
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds
+                    
+                    const response = await fetch(`/job/${jobId}`);
+                    const data = await response.json();
+
+                    if (data.status === 'completed') {
+                        clearInterval(messageInterval);
+                        currentTranscript = data;
+                        speakerNameMap = {};
+                        displayTranscript(data);
+                        loading.classList.remove('active');
+                        return;
+                    } else if (data.status === 'failed') {
+                        clearInterval(messageInterval);
+                        throw new Error(data.error || 'Transcription failed');
+                    }
+                    // Continue polling for 'queued' or 'processing' status
+                }
+            } catch (err) {
+                clearInterval(messageInterval);
+                throw err;
             }
         }
 

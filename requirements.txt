@@ -9,3 +9,5 @@ requests==2.31.0
 reportlab==4.0.7
 weasyprint==60.1
 markdown==3.5.1
+redis==5.0.1
+rq==1.15.1

@@ -6,6 +6,7 @@ import json
 import smtplib
 import tempfile
 import secrets
+import redis
 from functools import wraps
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -22,6 +23,8 @@ from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.enums import TA_LEFT
 import markdown as md
+from rq import Queue
+from rq.job import Job
 
 # Configuration - try to import config.py, fall back to environment variables
 try:
@@ -35,6 +38,7 @@ try:
     APP_USERNAME = getattr(config, 'APP_USERNAME', 'admin')
     APP_PASSWORD_HASH = getattr(config, 'APP_PASSWORD_HASH', None)
     SECRET_KEY = getattr(config, 'SECRET_KEY', secrets.token_hex(32))
+    REDIS_URL = getattr(config, 'REDIS_URL', 'redis://localhost:6379')
 except ImportError:
     # Fall back to environment variables (for Heroku deployment)
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
@@ -46,6 +50,7 @@ except ImportError:
     APP_USERNAME = os.environ.get('APP_USERNAME', 'admin')
     APP_PASSWORD_HASH = os.environ.get('APP_PASSWORD_HASH')
     SECRET_KEY = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+    REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379')
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -57,6 +62,18 @@ app.config['SECRET_KEY'] = SECRET_KEY
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Initialize Redis connection and queue
+try:
+    redis_conn = redis.from_url(REDIS_URL)
+    task_queue = Queue('transcription', connection=redis_conn)
+    REDIS_AVAILABLE = True
+    logger.info("Redis connection established")
+except Exception as e:
+    logger.warning(f"Redis not available, falling back to sync mode: {e}")
+    REDIS_AVAILABLE = False
+    redis_conn = None
+    task_queue = None
 
 
 def login_required(f):
@@ -73,66 +90,6 @@ def login_required(f):
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
-def transcribe_with_diarization(file_path):
-    """
-    Use OpenAI's diarization model via REST API (since Python SDK doesn't support chunking_strategy yet)
-    """
-    with open(file_path, 'rb') as audio_file:
-        response = requests.post(
-            'https://api.openai.com/v1/audio/transcriptions',
-            headers={'Authorization': f'Bearer {OPENAI_API_KEY}'},
-            files={'file': audio_file},
-            data={
-                'model': 'gpt-4o-transcribe-diarize',
-                'response_format': 'text',
-                'chunking_strategy': 'auto'
-            },
-            timeout=600  # 10 minute timeout for long files
-        )
-    
-    if response.status_code != 200:
-        raise Exception(f"Transcription API error: {response.text}")
-    
-    return response.text
-
-
-def identify_speakers_with_gpt4(transcript_text):
-    """
-    Use GPT-4 to identify and label different speakers in the transcript
-    """
-    logger.info("Identifying speakers with GPT-4...")
-    
-    system_prompt = """You are a transcript formatter. Your job is to take a meeting transcript and format it with clear speaker labels.
-
-Rules:
-1. Identify distinct speakers based on conversational patterns, context, and speaking styles
-2. Label speakers as "Speaker 1", "Speaker 2", etc. (or use names if you can identify them from context)
-3. Format the output as a JSON array of segments with this structure:
-   {"segments": [{"speaker": "Speaker 1", "text": "what they said"}, ...]}
-4. Merge consecutive segments from the same speaker
-5. Keep the text faithful to the original - don't paraphrase
-6. If there are interjections like "Mm-hmm", "Right", "Yeah" - attribute them to the appropriate speaker based on context
-
-Return ONLY valid JSON, no other text."""
-
-    user_prompt = f"""Here is a meeting transcript. Please identify the speakers and format it as JSON:
-
-{transcript_text}"""
-
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.1
-    )
-    
-    result = json.loads(response.choices[0].message.content)
-    return result
 
 
 def generate_pdf(segments, title="Meeting Transcript"):
@@ -389,6 +346,7 @@ def index():
 @app.route('/transcribe', methods=['POST'])
 @login_required
 def transcribe():
+    """Start a transcription job (async with Redis, sync fallback)"""
     try:
         logger.info("Received transcription request")
         
@@ -408,37 +366,78 @@ def transcribe():
             return jsonify({'error': 'Invalid file format. Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm'}), 400
         
         filename = secure_filename(file.filename)
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as temp_file:
-            file.save(temp_file.name)
-            temp_file_path = temp_file.name
+        # Save to /tmp with a unique name that persists for the worker
+        temp_file_path = os.path.join('/tmp', f"transcribe_{secrets.token_hex(8)}{os.path.splitext(filename)[1]}")
+        file.save(temp_file_path)
         
-        logger.info(f"File saved temporarily to: {temp_file_path}")
+        logger.info(f"File saved to: {temp_file_path}")
         file_size = os.path.getsize(temp_file_path)
         logger.info(f"File size: {file_size} bytes")
         
-        try:
-            logger.info("Step 1: Transcribing with diarization model...")
-            raw_transcript = transcribe_with_diarization(temp_file_path)
-            logger.info(f"Raw transcript length: {len(raw_transcript)} chars")
-            
-            logger.info("Step 2: Identifying speakers with GPT-4...")
-            diarized_result = identify_speakers_with_gpt4(raw_transcript)
-            
-            result = {
-                'text': raw_transcript,
-                'segments': diarized_result.get('segments', [])
-            }
-            
-            logger.info(f"Returning {len(result['segments'])} diarized segments")
-            return jsonify(result)
-        
-        finally:
-            if os.path.exists(temp_file_path):
-                os.unlink(temp_file_path)
-                logger.info("Temporary file cleaned up")
+        # Queue the job if Redis is available
+        if REDIS_AVAILABLE and task_queue:
+            from jobs import transcribe_audio_job
+            job = task_queue.enqueue(
+                transcribe_audio_job,
+                temp_file_path,
+                job_timeout=600  # 10 minute timeout
+            )
+            logger.info(f"Job queued with ID: {job.id}")
+            return jsonify({
+                'status': 'queued',
+                'job_id': job.id,
+                'message': 'Transcription started. Poll /job/<job_id> for status.'
+            })
+        else:
+            # Fallback to sync processing (for local dev without Redis)
+            logger.warning("Redis not available, processing synchronously")
+            from jobs import transcribe_audio_job
+            result = transcribe_audio_job(temp_file_path)
+            if result.get('status') == 'completed':
+                return jsonify(result)
+            else:
+                return jsonify({'error': result.get('error', 'Unknown error')}), 500
     
     except Exception as e:
         logger.exception(f"Error during transcription: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/job/<job_id>')
+@login_required
+def get_job_status(job_id):
+    """Check the status of a transcription job"""
+    if not REDIS_AVAILABLE:
+        return jsonify({'error': 'Redis not available'}), 503
+    
+    try:
+        job = Job.fetch(job_id, connection=redis_conn)
+        
+        if job.is_finished:
+            result = job.result
+            if result.get('status') == 'completed':
+                return jsonify({
+                    'status': 'completed',
+                    'text': result.get('text', ''),
+                    'segments': result.get('segments', [])
+                })
+            else:
+                return jsonify({
+                    'status': 'failed',
+                    'error': result.get('error', 'Unknown error')
+                })
+        elif job.is_failed:
+            return jsonify({
+                'status': 'failed',
+                'error': str(job.exc_info) if job.exc_info else 'Job failed'
+            })
+        elif job.is_started:
+            return jsonify({'status': 'processing'})
+        else:
+            return jsonify({'status': 'queued'})
+    
+    except Exception as e:
+        logger.exception(f"Error fetching job {job_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -570,7 +569,10 @@ def send_transcript_email():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'healthy'})
+    return jsonify({
+        'status': 'healthy',
+        'redis': REDIS_AVAILABLE
+    })
 
 
 if __name__ == '__main__':
