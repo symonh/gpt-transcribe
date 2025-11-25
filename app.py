@@ -399,7 +399,12 @@ def transcribe():
             from jobs import transcribe_audio_job
             result = transcribe_audio_job(file_data_b64, filename)
             if result.get('status') == 'completed':
-                return jsonify(result)
+                return jsonify({
+                    'status': 'completed',
+                    'text': result.get('text', ''),
+                    'segments': result.get('segments', []),
+                    'duration': result.get('duration', 0)
+                })
             else:
                 return jsonify({'error': result.get('error', 'Unknown error')}), 500
     
@@ -424,7 +429,8 @@ def get_job_status(job_id):
                 return jsonify({
                     'status': 'completed',
                     'text': result.get('text', ''),
-                    'segments': result.get('segments', [])
+                    'segments': result.get('segments', []),
+                    'duration': result.get('duration', 0)
                 })
             else:
                 return jsonify({
