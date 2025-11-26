@@ -12,4 +12,4 @@ markdown==3.5.1
 redis==5.0.1
 rq==1.15.1
 pydub==0.25.1
-audioop-lts==0.2.2
+audioop-lts==0.2.2; python_version >= "3.13"
