@@ -50,16 +50,11 @@ def transcribe_audio_job(file_data_b64, filename):
         logger.info("Transcribing with diarization model (diarized_json format)...")
         diarized_result = transcribe_with_diarization(temp_file_path)
         
-        # Extract segments with timestamps
-        segments = []
-        for seg in diarized_result.get('segments', []):
-            segments.append({
-                'speaker': seg.get('speaker', 'Speaker'),
-                'text': seg.get('text', ''),
-                'start': seg.get('start', 0),
-                'end': seg.get('end', 0),
-                'id': seg.get('id', '')
-            })
+        # Extract and merge consecutive segments from the same speaker
+        raw_segments = diarized_result.get('segments', [])
+        segments = merge_consecutive_speaker_segments(raw_segments)
+        
+        logger.info(f"Merged {len(raw_segments)} raw segments into {len(segments)} merged segments")
         
         result = {
             'status': 'completed',
@@ -108,4 +103,59 @@ def transcribe_with_diarization(file_path):
         raise Exception(f"Transcription API error: {response.text}")
     
     return response.json()
+
+
+def merge_consecutive_speaker_segments(raw_segments):
+    """
+    Merge consecutive segments from the same speaker into single segments.
+    This prevents fragmented output where each word is a separate segment.
+    """
+    if not raw_segments:
+        return []
+    
+    merged = []
+    current_segment = None
+    
+    for seg in raw_segments:
+        speaker = seg.get('speaker', 'Speaker')
+        text = seg.get('text', '').strip()
+        start = seg.get('start', 0)
+        end = seg.get('end', 0)
+        
+        # Skip empty segments
+        if not text:
+            continue
+        
+        if current_segment is None:
+            # Start a new segment
+            current_segment = {
+                'speaker': speaker,
+                'text': text,
+                'start': start,
+                'end': end
+            }
+        elif current_segment['speaker'] == speaker:
+            # Same speaker - merge by appending text and extending end time
+            # Add space between text fragments
+            current_segment['text'] += ' ' + text
+            current_segment['end'] = end
+        else:
+            # Different speaker - save current and start new
+            merged.append(current_segment)
+            current_segment = {
+                'speaker': speaker,
+                'text': text,
+                'start': start,
+                'end': end
+            }
+    
+    # Don't forget the last segment
+    if current_segment is not None:
+        merged.append(current_segment)
+    
+    # Add IDs to merged segments
+    for i, seg in enumerate(merged):
+        seg['id'] = f'seg_{i:03d}'
+    
+    return merged
 
