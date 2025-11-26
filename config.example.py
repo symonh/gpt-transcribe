@@ -25,6 +25,9 @@ APP_PASSWORD_HASH = 'your-password-hash-here'  # Generate with werkzeug.security
 SECRET_KEY = 'generate-a-random-secret-key'  # Use: python -c "import secrets; print(secrets.token_hex(32))"
 
 # App Configuration
-MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB max file size
+MAX_CONTENT_LENGTH = 300 * 1024 * 1024  # 300MB max file size
 ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'}
+
+# Parallel Processing - number of chunks to transcribe simultaneously
+MAX_PARALLEL_CHUNKS = 10  # Higher = faster for long files, but uses more API concurrency
 

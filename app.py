@@ -44,7 +44,7 @@ except ImportError:
     OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
     GMAIL_SENDER_EMAIL = os.environ.get('GMAIL_SENDER_EMAIL')
     GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
-    MAX_CONTENT_LENGTH = 100 * 1024 * 1024  # 100MB
+    MAX_CONTENT_LENGTH = 300 * 1024 * 1024  # 300MB
     ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'}
     # Auth credentials from environment
     APP_USERNAME = os.environ.get('APP_USERNAME', 'admin')
@@ -385,7 +385,7 @@ def transcribe():
                 transcribe_audio_job,
                 file_data_b64,
                 filename,
-                job_timeout=600  # 10 minute timeout
+                job_timeout=1800  # 30 minute timeout for large files with chunking
             )
             logger.info(f"Job queued with ID: {job.id}")
             return jsonify({
