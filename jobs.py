@@ -1,15 +1,12 @@
 """
 Background job functions for transcription processing.
-Supports chunking large audio files and processing them in parallel for faster transcription.
+Uses OpenAI's gpt-4o-transcribe-diarize model which handles chunking internally.
 """
 import os
-import json
 import base64
 import tempfile
 import requests
 import logging
-import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
@@ -29,22 +26,11 @@ def get_openai_api_key():
             _openai_api_key = os.environ.get('OPENAI_API_KEY')
     return _openai_api_key
 
-# Chunk configuration
-CHUNK_DURATION_MS = 10 * 60 * 1000  # 10 minutes per chunk
-CHUNK_SIZE_THRESHOLD = 25 * 1024 * 1024  # Only chunk files larger than 25MB
-
-# Max parallel chunks - configurable via environment or config
-try:
-    import config
-    MAX_PARALLEL_CHUNKS = getattr(config, 'MAX_PARALLEL_CHUNKS', 10)
-except ImportError:
-    MAX_PARALLEL_CHUNKS = int(os.environ.get('MAX_PARALLEL_CHUNKS', '10'))
-
 
 def transcribe_audio_job(file_data_b64, filename):
     """
     Background job to transcribe audio file.
-    For large files, automatically splits into chunks and processes in parallel.
+    Sends the file directly to OpenAI which handles chunking internally via chunking_strategy='auto'.
     
     file_data_b64: Base64 encoded file content
     filename: Original filename (for extension)
@@ -63,32 +49,25 @@ def transcribe_audio_job(file_data_b64, filename):
             temp_file.write(file_data)
             temp_file_path = temp_file.name
         
-        logger.info(f"File saved to worker temp: {temp_file_path}, size: {file_size} bytes")
+        logger.info(f"File saved to temp: {temp_file_path}, size: {file_size / 1024 / 1024:.2f} MB")
         
-        # Determine if we should use chunking (for large files)
-        if file_size > CHUNK_SIZE_THRESHOLD:
-            logger.info(f"Large file detected ({file_size} bytes), using chunked parallel processing")
-            result = transcribe_with_chunking(temp_file_path, ext)
-        else:
-            logger.info(f"Small file ({file_size} bytes), using single transcription")
-            # Transcribe with diarization model using diarized_json format
-            logger.info("Transcribing with diarization model (diarized_json format)...")
-            diarized_result = transcribe_with_diarization(temp_file_path)
-            
-            # Extract and merge consecutive segments from the same speaker
-            raw_segments = diarized_result.get('segments', [])
-            segments = merge_consecutive_speaker_segments(raw_segments)
-            
-            logger.info(f"Merged {len(raw_segments)} raw segments into {len(segments)} merged segments")
-            
-            result = {
-                'status': 'completed',
-                'text': diarized_result.get('text', ''),
-                'duration': diarized_result.get('duration', 0),
-                'segments': segments
-            }
+        # Transcribe with diarization model
+        # OpenAI handles chunking internally with chunking_strategy='auto'
+        logger.info("Sending to OpenAI for transcription (chunking handled by API)...")
+        diarized_result = transcribe_with_diarization(temp_file_path)
         
-        logger.info(f"Transcription completed with {len(result.get('segments', []))} segments")
+        # Extract and merge consecutive segments from the same speaker
+        raw_segments = diarized_result.get('segments', [])
+        segments = merge_consecutive_speaker_segments(raw_segments)
+        
+        logger.info(f"Transcription completed: {len(raw_segments)} raw segments -> {len(segments)} merged segments")
+        
+        result = {
+            'status': 'completed',
+            'text': diarized_result.get('text', ''),
+            'duration': diarized_result.get('duration', 0),
+            'segments': segments
+        }
         
         return result
     
@@ -106,225 +85,10 @@ def transcribe_audio_job(file_data_b64, filename):
             logger.info("Temporary file cleaned up")
 
 
-def transcribe_with_chunking(file_path, file_ext):
-    """
-    Split audio into chunks, transcribe in parallel, and merge results.
-    Returns the combined transcription result.
-    """
-    chunk_paths = []
-    try:
-        # Try to import pydub for audio chunking
-        try:
-            from pydub import AudioSegment
-        except ImportError:
-            logger.warning("pydub not available, falling back to single transcription")
-            diarized_result = transcribe_with_diarization(file_path)
-            raw_segments = diarized_result.get('segments', [])
-            segments = merge_consecutive_speaker_segments(raw_segments)
-            return {
-                'status': 'completed',
-                'text': diarized_result.get('text', ''),
-                'duration': diarized_result.get('duration', 0),
-                'segments': segments
-            }
-        
-        # Load audio file
-        logger.info(f"Loading audio file for chunking: {file_path}")
-        try:
-            audio = AudioSegment.from_file(file_path)
-        except Exception as e:
-            logger.warning(f"Failed to load audio with pydub: {e}, falling back to single transcription")
-            diarized_result = transcribe_with_diarization(file_path)
-            raw_segments = diarized_result.get('segments', [])
-            segments = merge_consecutive_speaker_segments(raw_segments)
-            return {
-                'status': 'completed',
-                'text': diarized_result.get('text', ''),
-                'duration': diarized_result.get('duration', 0),
-                'segments': segments
-            }
-        
-        duration_ms = len(audio)
-        duration_seconds = duration_ms / 1000.0
-        logger.info(f"Audio duration: {duration_seconds:.2f} seconds ({duration_ms}ms)")
-        
-        # Calculate number of chunks
-        num_chunks = (duration_ms + CHUNK_DURATION_MS - 1) // CHUNK_DURATION_MS
-        logger.info(f"Splitting into {num_chunks} chunks of ~{CHUNK_DURATION_MS // 1000 // 60} minutes each")
-        
-        # If only one chunk, no need to split
-        if num_chunks <= 1:
-            logger.info("Only one chunk needed, using single transcription")
-            diarized_result = transcribe_with_diarization(file_path)
-            raw_segments = diarized_result.get('segments', [])
-            segments = merge_consecutive_speaker_segments(raw_segments)
-            return {
-                'status': 'completed',
-                'text': diarized_result.get('text', ''),
-                'duration': diarized_result.get('duration', 0),
-                'segments': segments
-            }
-        
-        # Create chunks
-        chunks_info = []
-        for i in range(num_chunks):
-            start_ms = i * CHUNK_DURATION_MS
-            end_ms = min((i + 1) * CHUNK_DURATION_MS, duration_ms)
-            
-            chunk_audio = audio[start_ms:end_ms]
-            
-            # Save chunk to temp file
-            chunk_path = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3').name
-            chunk_audio.export(chunk_path, format='mp3')
-            chunk_paths.append(chunk_path)
-            
-            chunks_info.append({
-                'index': i,
-                'path': chunk_path,
-                'start_offset_seconds': start_ms / 1000.0,
-                'duration_ms': end_ms - start_ms
-            })
-            
-            logger.info(f"Created chunk {i + 1}/{num_chunks}: {start_ms}ms - {end_ms}ms")
-        
-        # Transcribe chunks in parallel
-        logger.info(f"Starting parallel transcription of {len(chunks_info)} chunks with {MAX_PARALLEL_CHUNKS} workers")
-        chunk_results = transcribe_chunks_parallel(chunks_info)
-        
-        # Merge results
-        logger.info("Merging chunk results...")
-        merged_result = merge_chunk_results(chunk_results, duration_seconds)
-        
-        return merged_result
-        
-    finally:
-        # Clean up chunk temp files
-        for chunk_path in chunk_paths:
-            try:
-                if os.path.exists(chunk_path):
-                    os.unlink(chunk_path)
-            except Exception as e:
-                logger.warning(f"Failed to clean up chunk file {chunk_path}: {e}")
-
-
-def transcribe_chunks_parallel(chunks_info):
-    """
-    Transcribe multiple chunks in parallel using ThreadPoolExecutor.
-    Returns list of (chunk_info, result) tuples sorted by chunk index.
-    """
-    results = []
-    lock = threading.Lock()
-    
-    def transcribe_chunk(chunk_info):
-        """Transcribe a single chunk."""
-        try:
-            logger.info(f"Transcribing chunk {chunk_info['index'] + 1}...")
-            result = transcribe_with_diarization(chunk_info['path'])
-            logger.info(f"Chunk {chunk_info['index'] + 1} completed")
-            return (chunk_info, result)
-        except Exception as e:
-            logger.error(f"Error transcribing chunk {chunk_info['index']}: {e}")
-            return (chunk_info, {'error': str(e), 'segments': [], 'text': ''})
-    
-    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_CHUNKS) as executor:
-        futures = {executor.submit(transcribe_chunk, chunk): chunk for chunk in chunks_info}
-        
-        for future in as_completed(futures):
-            chunk_info, result = future.result()
-            with lock:
-                results.append((chunk_info, result))
-    
-    # Sort by chunk index to maintain order
-    results.sort(key=lambda x: x[0]['index'])
-    
-    return results
-
-
-def merge_chunk_results(chunk_results, total_duration):
-    """
-    Merge results from multiple chunks into a single transcript.
-    Adjusts timestamps based on chunk offsets and normalizes speaker labels.
-    """
-    all_segments = []
-    all_text_parts = []
-    speaker_mapping = {}  # Maps (chunk_index, original_speaker) -> normalized_speaker
-    next_speaker_id = 1
-    
-    for chunk_info, result in chunk_results:
-        if 'error' in result:
-            logger.warning(f"Chunk {chunk_info['index']} had error: {result['error']}")
-            continue
-        
-        chunk_offset = chunk_info['start_offset_seconds']
-        chunk_index = chunk_info['index']
-        
-        # Add text
-        chunk_text = result.get('text', '')
-        if chunk_text:
-            all_text_parts.append(chunk_text)
-        
-        # Process segments with timestamp adjustment
-        raw_segments = result.get('segments', [])
-        
-        for seg in raw_segments:
-            original_speaker = seg.get('speaker', 'Speaker')
-            text = seg.get('text', '').strip()
-            start = seg.get('start', 0) + chunk_offset
-            end = seg.get('end', 0) + chunk_offset
-            
-            if not text:
-                continue
-            
-            # Map speaker labels: try to maintain consistency across chunks
-            # For first chunk, create initial mappings
-            # For subsequent chunks, try to match or create new speakers
-            speaker_key = (chunk_index, original_speaker)
-            
-            if speaker_key not in speaker_mapping:
-                # For simplicity, we maintain chunk-local speaker IDs
-                # A more sophisticated approach would try to match voices across chunks
-                # but that requires voice fingerprinting which is beyond current API capabilities
-                normalized_speaker = f"Speaker {next_speaker_id}"
-                
-                # Try to preserve original speaker number if it exists
-                try:
-                    orig_num = int(original_speaker.split()[-1])
-                    if orig_num <= 10:  # Reasonable speaker count
-                        normalized_speaker = f"Speaker {orig_num}"
-                except (ValueError, IndexError):
-                    next_speaker_id += 1
-                
-                speaker_mapping[speaker_key] = normalized_speaker
-            
-            all_segments.append({
-                'speaker': speaker_mapping[speaker_key],
-                'text': text,
-                'start': start,
-                'end': end
-            })
-    
-    # Sort segments by start time (should already be sorted, but ensure it)
-    all_segments.sort(key=lambda x: x['start'])
-    
-    # Merge consecutive segments from the same speaker
-    merged_segments = merge_consecutive_speaker_segments(all_segments)
-    
-    # Combine all text
-    full_text = ' '.join(all_text_parts)
-    
-    logger.info(f"Merged {len(all_segments)} segments into {len(merged_segments)} final segments")
-    
-    return {
-        'status': 'completed',
-        'text': full_text,
-        'duration': total_duration,
-        'segments': merged_segments
-    }
-
-
 def transcribe_with_diarization(file_path):
     """
     Use OpenAI's diarization model via REST API with diarized_json format.
+    The API handles chunking internally via chunking_strategy='auto'.
     Returns segments with speaker labels, text, and timestamps (start/end).
     """
     api_key = get_openai_api_key()
@@ -341,7 +105,7 @@ def transcribe_with_diarization(file_path):
                 'response_format': 'diarized_json',
                 'chunking_strategy': 'auto'
             },
-            timeout=600
+            timeout=1800  # 30 minute timeout for large files
         )
     
     if response.status_code != 200:
@@ -381,7 +145,6 @@ def merge_consecutive_speaker_segments(raw_segments):
             }
         elif current_segment['speaker'] == speaker:
             # Same speaker - merge by appending text and extending end time
-            # Add space between text fragments
             current_segment['text'] += ' ' + text
             current_segment['end'] = end
         else:

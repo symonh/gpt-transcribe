@@ -28,6 +28,3 @@ SECRET_KEY = 'generate-a-random-secret-key'  # Use: python -c "import secrets; p
 MAX_CONTENT_LENGTH = 300 * 1024 * 1024  # 300MB max file size
 ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'}
 
-# Parallel Processing - number of chunks to transcribe simultaneously
-MAX_PARALLEL_CHUNKS = 10  # Higher = faster for long files, but uses more API concurrency
-
