@@ -45,7 +45,7 @@ except ImportError:
     GMAIL_SENDER_EMAIL = os.environ.get('GMAIL_SENDER_EMAIL')
     GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
     MAX_CONTENT_LENGTH = 300 * 1024 * 1024  # 300MB
-    ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'}
+    ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm', 'qta', 'mov', 'aac', 'ogg', 'flac', 'wma'}
     # Auth credentials from environment
     APP_USERNAME = os.environ.get('APP_USERNAME', 'admin')
     APP_PASSWORD_HASH = os.environ.get('APP_PASSWORD_HASH')
