@@ -1,18 +1,24 @@
 """
 Background job functions for transcription processing.
-Uses OpenAI's gpt-4o-transcribe-diarize model which handles chunking internally.
+Handles audio conversion, chunking for large files, and OpenAI transcription.
 """
 import os
 import base64
 import tempfile
+import subprocess
 import requests
 import logging
+import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Configuration - API key loaded lazily for testing without key
+# Configuration
+MAX_FILE_SIZE_MB = 24  # OpenAI limit is 25MB, leave buffer
+CHUNK_DURATION_MINUTES = 20  # Duration of each chunk for large files
+
 _openai_api_key = None
 
 def get_openai_api_key():
@@ -27,49 +33,176 @@ def get_openai_api_key():
     return _openai_api_key
 
 
+def convert_to_mp3(input_path, output_path):
+    """
+    Convert audio file to mp3 format using ffmpeg.
+    Uses 64kbps mono 16kHz which is optimal for speech recognition.
+    """
+    cmd = [
+        'ffmpeg', '-y', '-i', input_path,
+        '-vn',  # No video
+        '-ar', '16000',  # 16kHz sample rate
+        '-ac', '1',  # Mono
+        '-b:a', '64k',  # 64kbps bitrate
+        output_path
+    ]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"ffmpeg conversion failed: {result.stderr}")
+    
+    return output_path
+
+
+def get_audio_duration(file_path):
+    """Get audio duration in seconds using ffprobe."""
+    cmd = [
+        'ffprobe', '-v', 'error',
+        '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        file_path
+    ]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"ffprobe failed: {result.stderr}")
+    
+    return float(result.stdout.strip())
+
+
+def split_audio(input_path, chunk_duration_seconds, output_dir):
+    """
+    Split audio file into chunks of specified duration.
+    Returns list of chunk file paths.
+    """
+    total_duration = get_audio_duration(input_path)
+    num_chunks = math.ceil(total_duration / chunk_duration_seconds)
+    
+    chunk_paths = []
+    for i in range(num_chunks):
+        start_time = i * chunk_duration_seconds
+        chunk_path = os.path.join(output_dir, f'chunk_{i:03d}.mp3')
+        
+        cmd = [
+            'ffmpeg', '-y', '-i', input_path,
+            '-ss', str(start_time),
+            '-t', str(chunk_duration_seconds),
+            '-vn', '-ar', '16000', '-ac', '1', '-b:a', '64k',
+            chunk_path
+        ]
+        
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"ffmpeg split failed: {result.stderr}")
+        
+        # Only add if file has content
+        if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 1000:
+            chunk_paths.append(chunk_path)
+    
+    return chunk_paths
+
+
 def transcribe_audio_job(file_data_b64, filename):
     """
     Background job to transcribe audio file.
-    Sends the file directly to OpenAI which handles chunking internally via chunking_strategy='auto'.
+    Handles conversion, chunking, and merging for large files.
     
     file_data_b64: Base64 encoded file content
     filename: Original filename (for extension)
     Returns the transcription result with speaker diarization and timestamps.
     """
-    temp_file_path = None
+    temp_dir = None
     try:
         logger.info(f"Starting transcription job for: {filename}")
         
+        # Create temp directory for all working files
+        temp_dir = tempfile.mkdtemp(prefix='transcribe_')
+        
         # Decode base64 file data and save to temp file
         file_data = base64.b64decode(file_data_b64)
-        file_size = len(file_data)
+        file_size_mb = len(file_data) / (1024 * 1024)
         ext = os.path.splitext(filename)[1].lower()
         
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
-            temp_file.write(file_data)
-            temp_file_path = temp_file.name
+        original_path = os.path.join(temp_dir, f'original{ext}')
+        with open(original_path, 'wb') as f:
+            f.write(file_data)
         
-        logger.info(f"File saved to temp: {temp_file_path}, size: {file_size / 1024 / 1024:.2f} MB")
+        logger.info(f"File saved: {file_size_mb:.2f} MB")
         
-        # Transcribe with diarization model
-        # OpenAI handles chunking internally with chunking_strategy='auto'
-        logger.info("Sending to OpenAI for transcription (chunking handled by API)...")
-        diarized_result = transcribe_with_diarization(temp_file_path)
+        # Convert to mp3 for compatibility
+        logger.info("Converting to mp3...")
+        mp3_path = os.path.join(temp_dir, 'converted.mp3')
+        convert_to_mp3(original_path, mp3_path)
         
-        # Extract and merge consecutive segments from the same speaker
-        raw_segments = diarized_result.get('segments', [])
-        segments = merge_consecutive_speaker_segments(raw_segments)
+        mp3_size_mb = os.path.getsize(mp3_path) / (1024 * 1024)
+        logger.info(f"Converted mp3 size: {mp3_size_mb:.2f} MB")
         
-        logger.info(f"Transcription completed: {len(raw_segments)} raw segments -> {len(segments)} merged segments")
+        # Check if we need to chunk
+        if mp3_size_mb > MAX_FILE_SIZE_MB:
+            logger.info(f"File too large ({mp3_size_mb:.1f}MB > {MAX_FILE_SIZE_MB}MB), splitting into chunks...")
+            chunk_duration = CHUNK_DURATION_MINUTES * 60  # Convert to seconds
+            chunk_paths = split_audio(mp3_path, chunk_duration, temp_dir)
+            logger.info(f"Split into {len(chunk_paths)} chunks")
+            
+            # Get durations for each chunk (needed for timestamp offsets)
+            chunk_durations = [get_audio_duration(cp) for cp in chunk_paths]
+            
+            # Calculate time offsets for each chunk
+            time_offsets = [0]
+            for i in range(len(chunk_durations) - 1):
+                time_offsets.append(time_offsets[-1] + chunk_durations[i])
+            
+            # Transcribe ALL chunks in PARALLEL for speed
+            logger.info(f"Transcribing {len(chunk_paths)} chunks in parallel...")
+            chunk_results = [None] * len(chunk_paths)
+            
+            with ThreadPoolExecutor(max_workers=len(chunk_paths)) as executor:
+                future_to_idx = {
+                    executor.submit(transcribe_single_file, chunk_path): i 
+                    for i, chunk_path in enumerate(chunk_paths)
+                }
+                
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        chunk_results[idx] = future.result()
+                        logger.info(f"Chunk {idx+1}/{len(chunk_paths)} completed")
+                    except Exception as e:
+                        logger.error(f"Chunk {idx+1} failed: {e}")
+                        raise
+            
+            # Combine results with proper time offsets
+            all_segments = []
+            for i, chunk_result in enumerate(chunk_results):
+                time_offset = time_offsets[i]
+                for segment in chunk_result.get('segments', []):
+                    segment['start'] = segment.get('start', 0) + time_offset
+                    segment['end'] = segment.get('end', 0) + time_offset
+                    all_segments.append(segment)
+            
+            # Merge consecutive speaker segments
+            segments = merge_consecutive_speaker_segments(all_segments)
+            full_text = ' '.join(seg.get('text', '') for seg in segments)
+            total_duration = sum(chunk_durations)
+            
+        else:
+            # Single file transcription
+            logger.info("Transcribing file...")
+            result = transcribe_single_file(mp3_path)
+            
+            raw_segments = result.get('segments', [])
+            segments = merge_consecutive_speaker_segments(raw_segments)
+            full_text = result.get('text', '')
+            total_duration = result.get('duration', 0)
         
-        result = {
+        logger.info(f"Transcription completed: {len(segments)} segments")
+        
+        return {
             'status': 'completed',
-            'text': diarized_result.get('text', ''),
-            'duration': diarized_result.get('duration', 0),
+            'text': full_text,
+            'duration': total_duration,
             'segments': segments
         }
-        
-        return result
     
     except Exception as e:
         logger.exception(f"Error in transcription job: {e}")
@@ -79,17 +212,17 @@ def transcribe_audio_job(file_data_b64, filename):
         }
     
     finally:
-        # Clean up temp file
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.unlink(temp_file_path)
-            logger.info("Temporary file cleaned up")
+        # Clean up temp directory
+        if temp_dir and os.path.exists(temp_dir):
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            logger.info("Temporary files cleaned up")
 
 
-def transcribe_with_diarization(file_path):
+def transcribe_single_file(file_path):
     """
-    Use OpenAI's diarization model via REST API with diarized_json format.
-    The API handles chunking internally via chunking_strategy='auto'.
-    Returns segments with speaker labels, text, and timestamps (start/end).
+    Transcribe a single audio file using OpenAI's diarization model.
+    Uses gpt-4o-transcribe-diarize with diarized_json format.
     """
     api_key = get_openai_api_key()
     if not api_key:
@@ -105,13 +238,29 @@ def transcribe_with_diarization(file_path):
                 'response_format': 'diarized_json',
                 'chunking_strategy': 'auto'
             },
-            timeout=1800  # 30 minute timeout for large files
+            timeout=600  # 10 minute timeout per chunk
         )
     
     if response.status_code != 200:
         raise Exception(f"Transcription API error: {response.text}")
     
-    return response.json()
+    result = response.json()
+    
+    # diarized_json returns segments with speaker labels
+    segments = []
+    for seg in result.get('segments', []):
+        segments.append({
+            'speaker': seg.get('speaker', 'Speaker'),
+            'text': seg.get('text', '').strip(),
+            'start': seg.get('start', 0),
+            'end': seg.get('end', 0)
+        })
+    
+    return {
+        'text': result.get('text', ''),
+        'duration': result.get('duration', 0),
+        'segments': segments
+    }
 
 
 def merge_consecutive_speaker_segments(raw_segments):
