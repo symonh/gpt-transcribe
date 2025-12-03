@@ -45,7 +45,7 @@ except ImportError:
     GMAIL_SENDER_EMAIL = os.environ.get('GMAIL_SENDER_EMAIL')
     GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
     MAX_CONTENT_LENGTH = 300 * 1024 * 1024  # 300MB
-    ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'}
+    ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm', 'qta'}
     # Auth credentials from environment
     APP_USERNAME = os.environ.get('APP_USERNAME', 'admin')
     APP_PASSWORD_HASH = os.environ.get('APP_PASSWORD_HASH')
@@ -367,7 +367,7 @@ def transcribe():
         
         if not allowed_file(file.filename):
             logger.error(f"Invalid file format: {file.filename}")
-            return jsonify({'error': 'Invalid file format. Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm'}), 400
+            return jsonify({'error': 'Invalid file format. Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm, qta'}), 400
         
         filename = secure_filename(file.filename)
         

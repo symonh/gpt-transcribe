@@ -26,5 +26,5 @@ SECRET_KEY = 'generate-a-random-secret-key'  # Use: python -c "import secrets; p
 
 # App Configuration
 MAX_CONTENT_LENGTH = 300 * 1024 * 1024  # 300MB max file size
-ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'}
+ALLOWED_EXTENSIONS = {'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm', 'qta'}
 
