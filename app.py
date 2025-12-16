@@ -371,19 +371,25 @@ def transcribe():
         
         filename = secure_filename(file.filename)
         
-        # Read file content and encode as base64 to pass through Redis
+        # Read file content
         import base64
+        import uuid
         file_content = file.read()
-        file_data_b64 = base64.b64encode(file_content).decode('utf-8')
         
         logger.info(f"File size: {len(file_content)} bytes")
         
         # Queue the job if Redis is available
         if REDIS_AVAILABLE and task_queue:
+            # Store file data directly in Redis to avoid RQ serialization issues
+            # Use a unique key and set expiration (1 hour)
+            file_key = f"transcribe:file:{uuid.uuid4()}"
+            redis_conn.setex(file_key, 3600, file_content)
+            logger.info(f"File stored in Redis with key: {file_key}")
+            
             from jobs import transcribe_audio_job
             job = task_queue.enqueue(
                 transcribe_audio_job,
-                file_data_b64,
+                file_key,  # Pass only the Redis key, not the data
                 filename,
                 job_timeout=1800  # 30 minute timeout for large files with chunking
             )
@@ -396,8 +402,9 @@ def transcribe():
         else:
             # Fallback to sync processing (for local dev without Redis)
             logger.warning("Redis not available, processing synchronously")
+            file_data_b64 = base64.b64encode(file_content).decode('utf-8')
             from jobs import transcribe_audio_job
-            result = transcribe_audio_job(file_data_b64, filename)
+            result = transcribe_audio_job(file_data_b64, filename, use_redis_key=False)
             if result.get('status') == 'completed':
                 return jsonify({
                     'status': 'completed',
