@@ -269,7 +269,8 @@ def transcribe_single_file(file_path):
             files={'file': audio_file},
             data={
                 'model': 'gpt-4o-transcribe-diarize',
-                'response_format': 'verbose_json'
+                'response_format': 'diarized_json',
+                'chunking_strategy': 'auto'
             },
             timeout=600  # 10 minute timeout per chunk
         )
