@@ -375,13 +375,16 @@ def transcribe():
         import base64
         import uuid
         file_content = file.read()
+        file_size_mb = len(file_content) / (1024 * 1024)
         
-        logger.info(f"File size: {len(file_content)} bytes")
+        logger.info(f"File size: {len(file_content)} bytes ({file_size_mb:.2f} MB)")
         
-        # Queue the job if Redis is available
-        if REDIS_AVAILABLE and task_queue:
-            # Store file data directly in Redis to avoid RQ serialization issues
-            # Use a unique key and set expiration (1 hour)
+        # For large files (>5MB), process synchronously to avoid Redis memory limits
+        # Heroku's free Redis has only 25MB, so we can't store large files there
+        MAX_REDIS_FILE_SIZE_MB = 5
+        
+        if REDIS_AVAILABLE and task_queue and file_size_mb <= MAX_REDIS_FILE_SIZE_MB:
+            # Small files: use Redis queue for async processing
             file_key = f"transcribe:file:{uuid.uuid4()}"
             redis_conn.setex(file_key, 3600, file_content)
             logger.info(f"File stored in Redis with key: {file_key}")
@@ -400,8 +403,11 @@ def transcribe():
                 'message': 'Transcription started. Poll /job/<job_id> for status.'
             })
         else:
-            # Fallback to sync processing (for local dev without Redis)
-            logger.warning("Redis not available, processing synchronously")
+            # Large files or no Redis: process synchronously
+            if file_size_mb > MAX_REDIS_FILE_SIZE_MB:
+                logger.info(f"File too large for Redis ({file_size_mb:.1f}MB), processing synchronously")
+            else:
+                logger.warning("Redis not available, processing synchronously")
             file_data_b64 = base64.b64encode(file_content).decode('utf-8')
             from jobs import transcribe_audio_job
             result = transcribe_audio_job(file_data_b64, filename, use_redis_key=False)
