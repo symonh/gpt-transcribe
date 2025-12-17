@@ -379,12 +379,48 @@ def transcribe():
         
         logger.info(f"File size: {len(file_content)} bytes ({file_size_mb:.2f} MB)")
         
+        # Redis Mini plan has 25MB limit
+        # Compress large files before storing to fit more in Redis
+        import tempfile
+        import subprocess
+        import os as os_module
+        
+        compressed_content = file_content
+        if file_size_mb > 8:  # Compress files over 8MB
+            logger.info(f"Compressing large file ({file_size_mb:.1f}MB) before queuing...")
+            try:
+                ext = os_module.path.splitext(filename)[1].lower()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp_in:
+                    tmp_in.write(file_content)
+                    tmp_in_path = tmp_in.name
+                
+                tmp_out_path = tmp_in_path + '_compressed.mp3'
+                # Compress to 32kbps mono - good enough for speech, much smaller
+                cmd = ['ffmpeg', '-y', '-i', tmp_in_path, '-vn', '-ar', '16000', '-ac', '1', '-b:a', '32k', tmp_out_path]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+                
+                if result.returncode == 0 and os_module.path.exists(tmp_out_path):
+                    with open(tmp_out_path, 'rb') as f:
+                        compressed_content = f.read()
+                    compressed_mb = len(compressed_content) / (1024 * 1024)
+                    logger.info(f"Compressed: {file_size_mb:.1f}MB -> {compressed_mb:.1f}MB")
+                    os_module.unlink(tmp_out_path)
+                os_module.unlink(tmp_in_path)
+            except Exception as e:
+                logger.warning(f"Compression failed, using original: {e}")
+        
+        compressed_mb = len(compressed_content) / (1024 * 1024)
+        if compressed_mb > 20:
+            return jsonify({
+                'error': f'File too large even after compression ({compressed_mb:.1f}MB). Max is ~20MB. Please use a shorter audio file.'
+            }), 400
+        
         # Use Redis queue for async processing (avoids Heroku's 30-second timeout)
         if REDIS_AVAILABLE and task_queue:
-            # Store file data in Redis (works for files under ~20MB on Mini plan)
+            # Store compressed file data in Redis
             file_key = f"transcribe:file:{uuid.uuid4()}"
-            redis_conn.setex(file_key, 3600, file_content)  # Expire after 1 hour
-            logger.info(f"File stored in Redis with key: {file_key}")
+            redis_conn.setex(file_key, 3600, compressed_content)  # Expire after 1 hour
+            logger.info(f"File stored in Redis with key: {file_key} ({compressed_mb:.1f}MB)")
             
             from jobs import transcribe_audio_job
             job = task_queue.enqueue(
