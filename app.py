@@ -371,55 +371,29 @@ def transcribe():
         
         filename = secure_filename(file.filename)
         
-        # Read file content
+        # Read file content and process synchronously
+        # Synchronous processing is simpler, avoids Redis memory issues,
+        # and OpenAI API is fast enough that async isn't necessary
         import base64
-        import uuid
         file_content = file.read()
         file_size_mb = len(file_content) / (1024 * 1024)
         
         logger.info(f"File size: {len(file_content)} bytes ({file_size_mb:.2f} MB)")
+        logger.info("Processing synchronously...")
         
-        # Heroku Redis Mini plan has 25MB limit. Files >10MB are processed synchronously
-        # to leave room for RQ queue metadata and multiple smaller concurrent jobs
-        MAX_REDIS_FILE_SIZE_MB = 10
+        file_data_b64 = base64.b64encode(file_content).decode('utf-8')
+        from jobs import transcribe_audio_job
+        result = transcribe_audio_job(file_data_b64, filename, use_redis_key=False)
         
-        if REDIS_AVAILABLE and task_queue and file_size_mb <= MAX_REDIS_FILE_SIZE_MB:
-            # Small files: use Redis queue for async processing
-            file_key = f"transcribe:file:{uuid.uuid4()}"
-            redis_conn.setex(file_key, 3600, file_content)
-            logger.info(f"File stored in Redis with key: {file_key}")
-            
-            from jobs import transcribe_audio_job
-            job = task_queue.enqueue(
-                transcribe_audio_job,
-                file_key,  # Pass only the Redis key, not the data
-                filename,
-                job_timeout=1800  # 30 minute timeout for large files with chunking
-            )
-            logger.info(f"Job queued with ID: {job.id}")
+        if result.get('status') == 'completed':
             return jsonify({
-                'status': 'queued',
-                'job_id': job.id,
-                'message': 'Transcription started. Poll /job/<job_id> for status.'
+                'status': 'completed',
+                'text': result.get('text', ''),
+                'segments': result.get('segments', []),
+                'duration': result.get('duration', 0)
             })
         else:
-            # Large files or no Redis: process synchronously
-            if file_size_mb > MAX_REDIS_FILE_SIZE_MB:
-                logger.info(f"File too large for Redis queue ({file_size_mb:.1f}MB > {MAX_REDIS_FILE_SIZE_MB}MB), processing synchronously")
-            else:
-                logger.warning("Redis not available, processing synchronously")
-            file_data_b64 = base64.b64encode(file_content).decode('utf-8')
-            from jobs import transcribe_audio_job
-            result = transcribe_audio_job(file_data_b64, filename, use_redis_key=False)
-            if result.get('status') == 'completed':
-                return jsonify({
-                    'status': 'completed',
-                    'text': result.get('text', ''),
-                    'segments': result.get('segments', []),
-                    'duration': result.get('duration', 0)
-                })
-            else:
-                return jsonify({'error': result.get('error', 'Unknown error')}), 500
+            return jsonify({'error': result.get('error', 'Unknown error')}), 500
     
     except Exception as e:
         logger.exception(f"Error during transcription: {e}")
