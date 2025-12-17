@@ -379,9 +379,9 @@ def transcribe():
         
         logger.info(f"File size: {len(file_content)} bytes ({file_size_mb:.2f} MB)")
         
-        # For large files (>5MB), process synchronously to avoid Redis memory limits
-        # Heroku's free Redis has only 25MB, so we can't store large files there
-        MAX_REDIS_FILE_SIZE_MB = 5
+        # Heroku Redis Mini plan has 25MB limit. Files >10MB are processed synchronously
+        # to leave room for RQ queue metadata and multiple smaller concurrent jobs
+        MAX_REDIS_FILE_SIZE_MB = 10
         
         if REDIS_AVAILABLE and task_queue and file_size_mb <= MAX_REDIS_FILE_SIZE_MB:
             # Small files: use Redis queue for async processing
@@ -405,7 +405,7 @@ def transcribe():
         else:
             # Large files or no Redis: process synchronously
             if file_size_mb > MAX_REDIS_FILE_SIZE_MB:
-                logger.info(f"File too large for Redis ({file_size_mb:.1f}MB), processing synchronously")
+                logger.info(f"File too large for Redis queue ({file_size_mb:.1f}MB > {MAX_REDIS_FILE_SIZE_MB}MB), processing synchronously")
             else:
                 logger.warning("Redis not available, processing synchronously")
             file_data_b64 = base64.b64encode(file_content).decode('utf-8')
