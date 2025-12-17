@@ -268,27 +268,45 @@ def transcribe_single_file(file_path):
             headers={'Authorization': f'Bearer {api_key}'},
             files={'file': audio_file},
             data={
-                'model': 'gpt-4o-transcribe-diarize',
-                'response_format': 'diarized_json',
-                'chunking_strategy': 'auto'
+                'model': 'whisper-1',
+                'response_format': 'verbose_json',
+                'timestamp_granularities[]': 'segment'
             },
             timeout=600  # 10 minute timeout per chunk
         )
     
     if response.status_code != 200:
+        logger.error(f"OpenAI API error response: {response.text}")
         raise Exception(f"Transcription API error: {response.text}")
     
     result = response.json()
     
-    # diarized_json returns segments with speaker labels
+    # verbose_json returns segments with timestamps but no speaker labels
+    # We'll use a simple heuristic: assign alternating speakers based on pauses
     segments = []
+    current_speaker = 0
+    last_end = 0
+    
     for seg in result.get('segments', []):
+        text = seg.get('text', '').strip()
+        if not text:
+            continue
+            
+        start = seg.get('start', 0)
+        end = seg.get('end', 0)
+        
+        # If there's a pause >2 seconds, might be a different speaker
+        if start - last_end > 2.0:
+            current_speaker = 1 - current_speaker
+        
         segments.append({
-            'speaker': seg.get('speaker', 'Speaker'),
-            'text': seg.get('text', '').strip(),
-            'start': seg.get('start', 0),
-            'end': seg.get('end', 0)
+            'speaker': f'Speaker {current_speaker + 1}',
+            'text': text,
+            'start': start,
+            'end': end
         })
+        
+        last_end = end
     
     return {
         'text': result.get('text', ''),
