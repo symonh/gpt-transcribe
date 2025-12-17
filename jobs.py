@@ -171,9 +171,19 @@ def transcribe_audio_job(file_key_or_data, filename, use_redis_key=True):
         mp3_size_mb = os.path.getsize(mp3_path) / (1024 * 1024)
         logger.info(f"Converted mp3 size: {mp3_size_mb:.2f} MB")
         
-        # Check if we need to chunk
-        if mp3_size_mb > MAX_FILE_SIZE_MB:
-            logger.info(f"File too large ({mp3_size_mb:.1f}MB > {MAX_FILE_SIZE_MB}MB), splitting into chunks...")
+        # Get audio duration
+        audio_duration = get_audio_duration(mp3_path)
+        logger.info(f"Audio duration: {audio_duration:.2f} seconds ({audio_duration/60:.2f} minutes)")
+        
+        # gpt-4o-transcribe-diarize has a 1400 second (23.3 minute) limit
+        MAX_DURATION_SECONDS = 1400
+        
+        # Check if we need to chunk based on duration OR file size
+        if audio_duration > MAX_DURATION_SECONDS or mp3_size_mb > MAX_FILE_SIZE_MB:
+            if audio_duration > MAX_DURATION_SECONDS:
+                logger.info(f"Audio too long ({audio_duration/60:.1f} min > {MAX_DURATION_SECONDS/60:.1f} min), splitting into chunks...")
+            else:
+                logger.info(f"File too large ({mp3_size_mb:.1f}MB > {MAX_FILE_SIZE_MB}MB), splitting into chunks...")
             chunk_duration = CHUNK_DURATION_MINUTES * 60  # Convert to seconds
             chunk_paths = split_audio(mp3_path, chunk_duration, temp_dir)
             logger.info(f"Split into {len(chunk_paths)} chunks")
