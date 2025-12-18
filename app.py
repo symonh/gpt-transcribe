@@ -388,8 +388,9 @@ def transcribe():
             
             content_to_store = file_content
             
-            # Compress files > 30MB to fit within Redis 50MB limit
-            if file_size_mb > 30:
+            # ALWAYS compress files > 5MB to fit within Redis 50MB limit
+            # 32kbps mono gives ~240KB per minute, good enough for speech
+            if file_size_mb > 5:
                 logger.info(f"Compressing large file ({file_size_mb:.1f}MB) to fit Redis...")
                 try:
                     ext = os_module.path.splitext(filename)[1].lower()
@@ -398,8 +399,9 @@ def transcribe():
                         tmp_in_path = tmp_in.name
                     
                     tmp_out_path = tmp_in_path + '_compressed.mp3'
-                    # 32kbps mono - good quality for speech, ~240KB per minute
-                    cmd = ['ffmpeg', '-y', '-i', tmp_in_path, '-vn', '-ar', '16000', '-ac', '1', '-b:a', '32k', tmp_out_path]
+                    # 24kbps mono - good for speech, ~180KB per minute
+                    # A 30-min file becomes ~5MB instead of 26MB
+                    cmd = ['ffmpeg', '-y', '-i', tmp_in_path, '-vn', '-ar', '16000', '-ac', '1', '-b:a', '24k', tmp_out_path]
                     result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
                     
                     if result.returncode == 0 and os_module.path.exists(tmp_out_path):
@@ -413,8 +415,8 @@ def transcribe():
                     logger.warning(f"Compression failed, using original: {e}")
             
             stored_mb = len(content_to_store) / (1024 * 1024)
-            if stored_mb > 45:
-                return jsonify({'error': f'File too large ({stored_mb:.1f}MB). Max ~45MB after compression.'}), 400
+            if stored_mb > 40:
+                return jsonify({'error': f'File too large ({stored_mb:.1f}MB). Please use shorter audio files.'}), 400
             
             # Store file data in Redis
             file_key = f"transcribe:file:{uuid.uuid4()}"
